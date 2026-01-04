@@ -78,6 +78,39 @@ pip install anthropic[bedrock]
 ```
 Next, configure valid [AWS Credentials](https://docs.aws.amazon.com/cli/v1/userguide/cli-configure-envvars.html) and the target [AWS Region](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html) by setting the following environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`.
 
+#### Custom OpenAI-Compatible APIs
+
+The system supports any OpenAI-compatible API provider (e.g., local LLM servers, third-party API services). To use a custom provider, set the following environment variables:
+
+```bash
+export CUSTOM_API_KEY="your-api-key"
+export CUSTOM_BASE_URL="https://your-api-provider.com/v1"
+export CUSTOM_MODEL="your-model-name"
+```
+
+Then use `--model custom` when running the scripts:
+
+```bash
+# For ideation
+python ai_scientist/perform_ideation_temp_free.py \
+  --workshop-file "ai_scientist/ideas/my_research_topic.md" \
+  --model custom \
+  --max-num-generations 20
+
+# For paper generation
+python launch_scientist_bfts.py \
+  --load_ideas "ai_scientist/ideas/my_research_topic.json" \
+  --model_writeup custom \
+  --model_citation custom
+```
+
+Example with a specific provider:
+```bash
+export CUSTOM_API_KEY="sk-XXX"
+export CUSTOM_BASE_URL="https://open.cherryin.ai/v1"
+export CUSTOM_MODEL="agent/glm-4.6(free)"
+```
+
 #### Semantic Scholar API (Literature Search)
 
 Our code can optionally use a Semantic Scholar API Key (`S2_API_KEY`) for higher throughput during literature search [if you have one](https://www.semanticscholar.org/product/api). This is used during both the ideation and paper writing stages. The system should work without it, though you might encounter rate limits or reduced novelty checking during ideation. If you experience issues with Semantic Scholar, you can skip the citation phase during paper generation.

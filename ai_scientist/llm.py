@@ -15,6 +15,8 @@ AVAILABLE_LLMS = [
     "claude-3-5-sonnet-20241022",
     # OpenAI models
     "gpt-4o-mini",
+    # Custom OpenAI-compatible models (use CUSTOM_MODEL environment variable)
+    "custom",
     "gpt-4o-mini-2024-07-18",
     "gpt-4o",
     "gpt-4o-2024-05-13",
@@ -372,7 +374,20 @@ def get_response_from_llm(
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     else:
-        raise ValueError(f"Model {model} not supported.")
+        # Default handler for custom OpenAI-compatible models
+        new_msg_history = msg_history + [{"role": "user", "content": msg}]
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                *new_msg_history,
+            ],
+            temperature=temperature,
+            max_tokens=MAX_NUM_TOKENS,
+            n=1,
+        )
+        content = response.choices[0].message.content
+        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
 
     if print_debug:
         print()
@@ -470,6 +485,27 @@ def create_client(model) -> tuple[Any, str]:
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             ),
             model,
+        )
+    elif model == "custom" or model.startswith("custom/"):
+        # Custom OpenAI-compatible API support
+        # Uses environment variables: CUSTOM_API_KEY, CUSTOM_BASE_URL, CUSTOM_MODEL
+        custom_api_key = os.environ.get("CUSTOM_API_KEY")
+        custom_base_url = os.environ.get("CUSTOM_BASE_URL")
+        custom_model_name = os.environ.get("CUSTOM_MODEL", model.replace("custom/", "") if "/" in model else model)
+
+        if not custom_api_key:
+            raise ValueError("CUSTOM_API_KEY environment variable not set")
+        if not custom_base_url:
+            raise ValueError("CUSTOM_BASE_URL environment variable not set")
+
+        print(f"Using Custom OpenAI-compatible API with model {custom_model_name}.")
+        print(f"  Base URL: {custom_base_url}")
+        return (
+            openai.OpenAI(
+                api_key=custom_api_key,
+                base_url=custom_base_url,
+            ),
+            custom_model_name,
         )
     else:
         raise ValueError(f"Model {model} not supported.")

@@ -22,7 +22,20 @@ OPENAI_TIMEOUT_EXCEPTIONS = (
 @once
 def _setup_openai_client():
     global _client
-    _client = openai.OpenAI(max_retries=0)
+    import os
+
+    # Support for custom OpenAI-compatible APIs
+    custom_base_url = os.environ.get("CUSTOM_BASE_URL")
+    custom_api_key = os.environ.get("CUSTOM_API_KEY")
+
+    if custom_base_url and custom_api_key:
+        _client = openai.OpenAI(
+            api_key=custom_api_key,
+            base_url=custom_base_url,
+            max_retries=0
+        )
+    else:
+        _client = openai.OpenAI(max_retries=0)
 
 
 def query(
