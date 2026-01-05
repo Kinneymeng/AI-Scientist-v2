@@ -1,5 +1,20 @@
+import os
+
 from . import backend_anthropic, backend_openai
 from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
+
+
+def _resolve_model_name(model: str) -> str:
+    """Resolve 'custom' model name to actual model from environment variable."""
+    if model == "custom" or model.startswith("custom/"):
+        custom_model = os.environ.get("CUSTOM_MODEL")
+        if not custom_model:
+            raise ValueError(
+                "Model is 'custom' but CUSTOM_MODEL environment variable is not set. "
+                "Please set CUSTOM_MODEL to your actual model name (e.g., 'agent/glm-4.6(free)')."
+            )
+        return custom_model
+    return model
 
 
 def query(
@@ -26,15 +41,18 @@ def query(
     Returns:
         OutputType: A string completion if func_spec is None, otherwise a dict with the function call details.
     """
+    # Check if using custom model and resolve to actual model name
+    is_custom_model = model == "custom" or model.startswith("custom/")
+    resolved_model = _resolve_model_name(model)
 
     model_kwargs = model_kwargs | {
-        "model": model,
+        "model": resolved_model,
         "temperature": temperature,
     }
 
     # Handle models with beta limitations
     # ref: https://platform.openai.com/docs/guides/reasoning/beta-limitations
-    if model.startswith("o1"):
+    if resolved_model.startswith("o1"):
         if system_message and user_message is None:
             user_message = system_message
         elif system_message is None and user_message:
@@ -52,7 +70,11 @@ def query(
     else:
         model_kwargs["max_tokens"] = max_tokens
 
-    query_func = backend_anthropic.query if "claude-" in model else backend_openai.query
+    # Custom models use OpenAI-compatible backend
+    if is_custom_model:
+        query_func = backend_openai.query
+    else:
+        query_func = backend_anthropic.query if "claude-" in resolved_model else backend_openai.query
     output, req_time, in_tok_count, out_tok_count, info = query_func(
         system_message=compile_prompt_to_md(system_message) if system_message else None,
         user_message=compile_prompt_to_md(user_message) if user_message else None,
