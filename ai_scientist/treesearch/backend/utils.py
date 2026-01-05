@@ -26,8 +26,24 @@ def backoff_create(
     try:
         return create_fn(*args, **kwargs)
     except retry_exceptions as e:
-        logger.info(f"Backoff exception: {e}")
+        # Print detailed error info for retryable exceptions
+        logger.warning(f"[BACKOFF RETRY] Exception type: {type(e).__name__}")
+        logger.warning(f"[BACKOFF RETRY] Message: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.warning(f"[BACKOFF RETRY] Response status: {e.response.status_code}")
+            try:
+                logger.warning(f"[BACKOFF RETRY] Response body: {e.response.text[:500]}")
+            except:
+                pass
         return False
+    except Exception as e:
+        # Catch ALL exceptions and log them for debugging
+        import traceback
+        logger.error(f"[BACKOFF FATAL] Unexpected exception type: {type(e).__name__}")
+        logger.error(f"[BACKOFF FATAL] Exception message: {e}")
+        logger.error(f"[BACKOFF FATAL] Full traceback:\n{traceback.format_exc()}")
+        # Re-raise so we can see non-retryable errors
+        raise
 
 
 def opt_messages_to_list(
