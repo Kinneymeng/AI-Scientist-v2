@@ -1,4 +1,5 @@
 import base64
+import os
 from typing import Any
 import re
 import json
@@ -15,6 +16,8 @@ AVAILABLE_VLMS = [
     "gpt-4o-2024-11-20",
     "gpt-4o-mini-2024-07-18",
     "o3-mini",
+    # Custom OpenAI-compatible VLM (use CUSTOM_VLM_MODEL environment variable)
+    "custom",
 ]
 
 
@@ -78,7 +81,16 @@ def make_vlm_call(client, model, temperature, system_message, prompt):
             max_tokens=MAX_NUM_TOKENS,
         )
     else:
-        raise ValueError(f"Model {model} not supported.")
+        # Default handler for custom OpenAI-compatible VLMs
+        return client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                *prompt,
+            ],
+            temperature=temperature,
+            max_tokens=MAX_NUM_TOKENS,
+        )
 
 
 def prepare_vlm_prompt(msg, image_paths, max_images):
@@ -107,41 +119,44 @@ def get_response_from_vlm(
     if msg_history is None:
         msg_history = []
 
-    if model in AVAILABLE_VLMS:
-        # Convert single image path to list for consistent handling
-        if isinstance(image_paths, str):
-            image_paths = [image_paths]
-
-        # Create content list starting with the text message
-        content = [{"type": "text", "text": msg}]
-
-        # Add each image to the content list
-        for image_path in image_paths[:max_images]:
-            base64_image = encode_image_to_base64(image_path)
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}",
-                        "detail": "low",
-                    },
-                }
-            )
-        # Construct message with all images
-        new_msg_history = msg_history + [{"role": "user", "content": content}]
-
-        response = make_vlm_call(
-            client,
-            model,
-            temperature,
-            system_message=system_message,
-            prompt=new_msg_history,
-        )
-
-        content = response.choices[0].message.content
-        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
-    else:
+    # Check if model is supported (including custom models)
+    is_supported = model in AVAILABLE_VLMS or model == "custom" or model.startswith("custom/")
+    # Also support any model passed with a valid client (for custom VLM models)
+    if not is_supported and not (model and client):
         raise ValueError(f"Model {model} not supported.")
+
+    # Convert single image path to list for consistent handling
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
+
+    # Create content list starting with the text message
+    content = [{"type": "text", "text": msg}]
+
+    # Add each image to the content list
+    for image_path in image_paths[:max_images]:
+        base64_image = encode_image_to_base64(image_path)
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64_image}",
+                    "detail": "low",
+                },
+            }
+        )
+    # Construct message with all images
+    new_msg_history = msg_history + [{"role": "user", "content": content}]
+
+    response = make_vlm_call(
+        client,
+        model,
+        temperature,
+        system_message=system_message,
+        prompt=new_msg_history,
+    )
+
+    content = response.choices[0].message.content
+    new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
 
     if print_debug:
         print()
@@ -166,6 +181,28 @@ def create_client(model: str) -> tuple[Any, str]:
     ]:
         print(f"Using OpenAI API with model {model}.")
         return openai.OpenAI(), model
+    elif model == "custom" or model.startswith("custom/"):
+        # Custom OpenAI-compatible VLM support
+        # Uses environment variables: CUSTOM_API_KEY, CUSTOM_BASE_URL, CUSTOM_VLM_MODEL
+        custom_api_key = os.environ.get("CUSTOM_API_KEY")
+        custom_base_url = os.environ.get("CUSTOM_BASE_URL")
+        # Use CUSTOM_VLM_MODEL if set, otherwise fall back to CUSTOM_MODEL
+        custom_vlm_model = os.environ.get("CUSTOM_VLM_MODEL") or os.environ.get("CUSTOM_MODEL", "custom")
+
+        if not custom_api_key:
+            raise ValueError("CUSTOM_API_KEY environment variable not set")
+        if not custom_base_url:
+            raise ValueError("CUSTOM_BASE_URL environment variable not set")
+
+        print(f"Using Custom OpenAI-compatible VLM API with model {custom_vlm_model}.")
+        print(f"  Base URL: {custom_base_url}")
+        return (
+            openai.OpenAI(
+                api_key=custom_api_key,
+                base_url=custom_base_url,
+            ),
+            custom_vlm_model,
+        )
     else:
         raise ValueError(f"Model {model} not supported.")
 
@@ -236,54 +273,49 @@ def get_batch_responses_from_vlm(
     if msg_history is None:
         msg_history = []
 
-    if model in [
-        "gpt-4o-2024-05-13",
-        "gpt-4o-2024-08-06",
-        "gpt-4o-2024-11-20",
-        "gpt-4o-mini-2024-07-18",
-        "o3-mini",
-    ]:
-        # Convert single image path to list
-        if isinstance(image_paths, str):
-            image_paths = [image_paths]
+    # Check if model is supported (including custom models)
+    is_supported = model in AVAILABLE_VLMS or model == "custom" or model.startswith("custom/")
+    if not is_supported and not (model and client):
+        raise ValueError(f"Model {model} not supported.")
 
-        # Create content list with text and images
-        content = [{"type": "text", "text": msg}]
-        for image_path in image_paths[:max_images]:
-            base64_image = encode_image_to_base64(image_path)
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}",
-                        "detail": "low",
-                    },
-                }
-            )
+    # Convert single image path to list
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
 
-        # Construct message with all images
-        new_msg_history = msg_history + [{"role": "user", "content": content}]
-
-        # Get multiple responses
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=n_responses,
-            seed=0,
+    # Create content list with text and images
+    content = [{"type": "text", "text": msg}]
+    for image_path in image_paths[:max_images]:
+        base64_image = encode_image_to_base64(image_path)
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64_image}",
+                    "detail": "low",
+                },
+            }
         )
 
-        # Extract content from all responses
-        contents = [r.message.content for r in response.choices]
-        new_msg_histories = [
-            new_msg_history + [{"role": "assistant", "content": c}] for c in contents
-        ]
-    else:
-        raise ValueError(f"Model {model} not supported.")
+    # Construct message with all images
+    new_msg_history = msg_history + [{"role": "user", "content": content}]
+
+    # Get multiple responses
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_message},
+            *new_msg_history,
+        ],
+        temperature=temperature,
+        max_tokens=MAX_NUM_TOKENS,
+        n=n_responses,
+    )
+
+    # Extract content from all responses
+    contents = [r.message.content for r in response.choices]
+    new_msg_histories = [
+        new_msg_history + [{"role": "assistant", "content": c}] for c in contents
+    ]
 
     if print_debug:
         # Just print the first response
