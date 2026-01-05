@@ -8,10 +8,45 @@ from .journal import Node, Journal
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, parent_dir)
-from ai_scientist.llm import get_response_from_llm, extract_json_between_markers
+from ai_scientist.llm import get_response_from_llm, extract_json_between_markers, create_client
 
-client = openai.OpenAI()
-model = "gpt-4o-2024-08-06"
+
+def _get_client_and_model():
+    """Get OpenAI client and model, supporting custom API configuration."""
+    custom_base_url = os.environ.get("CUSTOM_BASE_URL")
+    custom_api_key = os.environ.get("CUSTOM_API_KEY")
+    custom_model = os.environ.get("CUSTOM_MODEL")
+
+    if custom_base_url and custom_api_key:
+        client = openai.OpenAI(
+            api_key=custom_api_key,
+            base_url=custom_base_url,
+        )
+        model = custom_model if custom_model else "gpt-4o-2024-08-06"
+        print(f"[log_summarization] Using Custom API with model: {model}")
+    else:
+        client = openai.OpenAI()
+        model = "gpt-4o-2024-08-06"
+    return client, model
+
+
+# Lazy initialization - will be set on first use
+_client = None
+_model = None
+
+
+def get_client():
+    global _client, _model
+    if _client is None:
+        _client, _model = _get_client_and_model()
+    return _client
+
+
+def get_model():
+    global _client, _model
+    if _model is None:
+        _client, _model = _get_client_and_model()
+    return _model
 
 report_summarizer_sys_msg = """You are an expert machine learning researcher.
 You are given multiple experiment logs, each representing a node in a stage of exploring scientific ideas and implementations.
@@ -274,8 +309,8 @@ def annotate_history(journal):
                             prev_overall_plan=node.parent.overall_plan,
                             current_plan=node.plan,
                         ),
-                        client,
-                        model,
+                        get_client(),
+                        get_model(),
                         report_summarizer_sys_msg,
                     )
                     node.overall_plan = extract_json_between_markers(response[0])[
@@ -336,7 +371,7 @@ def overall_summarize(journals):
             ]
             return [get_node_log(n) for n in good_leaf_nodes]
         elif idx == 0:
-            summary_json = get_stage_summary(journal, stage_name, model, client)
+            summary_json = get_stage_summary(journal, stage_name, get_model(), get_client())
             return summary_json
 
     from tqdm import tqdm
