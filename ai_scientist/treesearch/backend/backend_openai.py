@@ -54,6 +54,13 @@ def query(
         # force the model to use the function
         filtered_kwargs["tool_choice"] = func_spec.openai_tool_choice_dict
 
+    # Log request details for debugging
+    model_name = filtered_kwargs.get("model", "unknown")
+    has_tools = "tools" in filtered_kwargs
+    msg_preview = str(messages)[:500] if messages else "None"
+    logger.info(f"[OpenAI Request] Model: {model_name}, Has tools: {has_tools}")
+    logger.debug(f"[OpenAI Request] Messages preview: {msg_preview}...")
+
     t0 = time.time()
     completion = backoff_create(
         _client.chat.completions.create,
