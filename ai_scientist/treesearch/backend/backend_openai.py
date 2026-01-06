@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 
 from .utils import FunctionSpec, OutputType, opt_messages_to_list, backoff_create
@@ -10,6 +11,7 @@ from rich import print
 logger = logging.getLogger("ai-scientist")
 
 _client: openai.OpenAI = None  # type: ignore
+_is_custom_api: bool = False  # Track if using custom API
 
 OPENAI_TIMEOUT_EXCEPTIONS = (
     openai.RateLimitError,
@@ -21,8 +23,7 @@ OPENAI_TIMEOUT_EXCEPTIONS = (
 
 @once
 def _setup_openai_client():
-    global _client
-    import os
+    global _client, _is_custom_api
 
     # Support for custom OpenAI-compatible APIs
     custom_base_url = os.environ.get("CUSTOM_BASE_URL")
@@ -34,8 +35,30 @@ def _setup_openai_client():
             base_url=custom_base_url,
             max_retries=0
         )
+        _is_custom_api = True
+        logger.info(f"[OpenAI Backend] Using custom API: {custom_base_url}")
     else:
         _client = openai.OpenAI(max_retries=0)
+        _is_custom_api = False
+
+
+def _should_force_tool_choice() -> bool:
+    """Determine if tool_choice should be forced.
+
+    Many custom OpenAI-compatible APIs (like CherryIn) don't support
+    the tool_choice parameter to force function calling. This function
+    checks the environment variable to decide whether to force it.
+
+    Set CUSTOM_FORCE_TOOL_CHOICE=true to enable forced tool_choice.
+    Default is False for custom APIs, True for official OpenAI API.
+    """
+    force_env = os.environ.get("CUSTOM_FORCE_TOOL_CHOICE", "").lower()
+    if force_env in ("true", "1", "yes"):
+        return True
+    if force_env in ("false", "0", "no"):
+        return False
+    # Default: don't force for custom APIs, force for official OpenAI
+    return not _is_custom_api
 
 
 def query(
@@ -47,12 +70,24 @@ def query(
     _setup_openai_client()
     filtered_kwargs: dict = select_values(notnone, model_kwargs)  # type: ignore
 
-    messages = opt_messages_to_list(system_message, user_message)
-
+    # Handle function calling setup
     if func_spec is not None:
         filtered_kwargs["tools"] = [func_spec.as_openai_tool_dict]
-        # force the model to use the function
-        filtered_kwargs["tool_choice"] = func_spec.openai_tool_choice_dict
+        # Only force tool_choice if supported (official OpenAI API or explicitly enabled)
+        if _should_force_tool_choice():
+            filtered_kwargs["tool_choice"] = func_spec.openai_tool_choice_dict
+            logger.debug("[OpenAI Request] Using forced tool_choice")
+        else:
+            # For custom APIs that don't support tool_choice, we rely on the model
+            # to use the tool based on the prompt. Add instruction to system message.
+            logger.info("[OpenAI Request] Not forcing tool_choice (custom API mode)")
+            # Enhance the system message to encourage tool use
+            if system_message:
+                tool_instruction = f"\n\nIMPORTANT: You MUST use the '{func_spec.name}' function to respond. Do not respond with plain text."
+                system_message = system_message + tool_instruction
+
+    # Build messages after potential system_message modification
+    messages = opt_messages_to_list(system_message, user_message)
 
     # Log request details for debugging
     model_name = filtered_kwargs.get("model", "unknown")
@@ -75,12 +110,24 @@ def query(
     if func_spec is None:
         output = choice.message.content
     else:
-        assert (
-            choice.message.tool_calls
-        ), f"function_call is empty, it is not a function call: {choice.message}"
-        assert (
-            choice.message.tool_calls[0].function.name == func_spec.name
-        ), "Function name mismatch"
+        # Check if the model used the tool
+        if not choice.message.tool_calls:
+            # Model didn't use the tool - this can happen with custom APIs that don't support tool_choice
+            error_msg = (
+                f"Model did not use the required function '{func_spec.name}'. "
+                f"Instead returned: {choice.message.content[:200] if choice.message.content else '(empty)'}... "
+                f"This may indicate the model doesn't support function calling properly. "
+                f"Try setting CUSTOM_FORCE_TOOL_CHOICE=true or use a different model."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if choice.message.tool_calls[0].function.name != func_spec.name:
+            raise ValueError(
+                f"Function name mismatch: expected '{func_spec.name}', "
+                f"got '{choice.message.tool_calls[0].function.name}'"
+            )
+
         try:
             print(f"[cyan]Raw func call response: {choice}[/cyan]")
             output = json.loads(choice.message.tool_calls[0].function.arguments)
