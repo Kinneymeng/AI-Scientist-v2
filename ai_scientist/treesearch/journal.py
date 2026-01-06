@@ -20,6 +20,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _get_default_model() -> str:
+    """Get the default model, preferring CUSTOM_MODEL environment variable."""
+    custom_model = os.environ.get("CUSTOM_MODEL")
+    if custom_model:
+        return "custom"  # Will be resolved by backend/__init__.py
+    return "gpt-4o"
+
 node_selection_spec = FunctionSpec(
     name="select_best_implementation",
     description="Select the best implementation based on comprehensive analysis",
@@ -471,7 +479,7 @@ class Journal:
                 system_message=prompt,
                 user_message=None,
                 func_spec=node_selection_spec,
-                model="gpt-4o",
+                model=_get_default_model(),
                 temperature=0.3,
             )
 
@@ -535,7 +543,7 @@ class Journal:
                 "2. Common failure patterns and pitfalls to avoid\n"
                 "3. Specific recommendations for future experiments based on both successes and failures"
             ),
-            model="gpt-4o",
+            model=_get_default_model(),
             temperature=0.3,
         )
 
@@ -599,7 +607,7 @@ class Journal:
         stage_summary = query(
             system_message=summary_prompt,
             user_message="Generate a comprehensive summary of the experimental findings in this stage",
-            model="gpt-4",
+            model=_get_default_model(),
             temperature=0.3,
         )
 
